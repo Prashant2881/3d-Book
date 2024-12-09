@@ -1,0 +1,535 @@
+    
+<!DOCTYPE html>
+<html>
+<head>
+    <title>3D Note Book</title>
+    <style>
+        body { margin: 0; background-color: white; }
+        canvas { display: block; }
+        #switch-container {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            z-index: 100;
+            cursor: pointer;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.7.1/dist/gsap.min.js"></script>
+</head>
+<body>
+    
+    <script>
+        let scene, camera, renderer, light, bag, notebook, table;
+        let isLightOn = false;
+        let isNotebookOpen = false;
+        let switchMesh, bulbMesh, bulbLight, switchGlow, bulbGlow;
+
+        function init() {
+            // Scene setup
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            // Lighting
+            light = new THREE.SpotLight(0xffffff, 0);
+            light.position.set(0, 10, 10);
+            scene.add(light);
+
+            // 3D Switch
+            const switchBase = new THREE.BoxGeometry(0.4, 0.8, 0.1);
+            const switchMaterial = new THREE.MeshPhongMaterial({ 
+                color: 0x404040,
+                emissive: 0xff0000,
+                emissiveIntensity: 0
+            });
+            switchMesh = new THREE.Group();
+            
+            const base = new THREE.Mesh(switchBase, switchMaterial);
+            switchMesh.add(base);
+
+            // Switch glow
+            const glowGeometry = new THREE.BoxGeometry(0.5, 0.9, 0.2);
+            const glowMaterial = new THREE.MeshBasicMaterial({
+                color: 0x808080,
+                transparent: true,
+                opacity: 0.5
+            });
+            switchGlow = new THREE.Mesh(glowGeometry, glowMaterial);
+            switchGlow.visible = true;
+            switchMesh.add(switchGlow);
+
+            const leverGeometry = new THREE.BoxGeometry(0.1, 0.3, 0.1);
+            const leverMaterial = new THREE.MeshPhongMaterial({ color: 0x808080 });
+            const lever = new THREE.Mesh(leverGeometry, leverMaterial);
+            lever.position.set(0, 0.2, 0.1);
+            switchMesh.add(lever);
+
+            switchMesh.position.set(-1.5, 1, 0);
+            scene.add(switchMesh);
+
+            // Light Bulb
+            const bulbGeometry = new THREE.SphereGeometry(0.2, 32, 32);
+            const bulbMaterial = new THREE.MeshPhongMaterial({ 
+                color: 0xffff00,
+                transparent: true,
+                opacity: 0.7,
+                emissive: 0x000000
+            });
+            bulbMesh = new THREE.Mesh(bulbGeometry, bulbMaterial);
+            bulbMesh.position.set(0, 4, 0);
+            scene.add(bulbMesh);
+
+            // Bulb glow
+            const bulbGlowGeometry = new THREE.SphereGeometry(0.3, 32, 32);
+            const bulbGlowMaterial = new THREE.MeshBasicMaterial({
+                color: 0xffff00,
+                transparent: true,
+                opacity: 0
+            });
+            bulbGlow = new THREE.Mesh(bulbGlowGeometry, bulbGlowMaterial);
+            bulbGlow.position.copy(bulbMesh.position);
+            scene.add(bulbGlow);
+
+            // Bulb base
+            const baseGeometry = new THREE.CylinderGeometry(0.1, 0.1, 0.2, 32);
+            const baseMesh = new THREE.Mesh(baseGeometry, new THREE.MeshPhongMaterial({ color: 0x404040 }));
+            baseMesh.position.set(0, 3.7, 0);
+            scene.add(baseMesh);
+
+            // Bulb light
+            bulbLight = new THREE.PointLight(0xffff00, 0, 10);
+            bulbLight.position.copy(bulbMesh.position);
+            scene.add(bulbLight);
+
+            // Table
+            const tableGeometry = new THREE.BoxGeometry(4, 0.2, 2);
+            const tableMaterial = new THREE.MeshPhongMaterial({ color: 0x8b4513 });
+            table = new THREE.Mesh(tableGeometry, tableMaterial);
+            scene.add(table);
+
+            // Table legs
+            for(let i = 0; i < 4; i++) {
+                const legGeometry = new THREE.BoxGeometry(0.2, 2, 0.2);
+                const leg = new THREE.Mesh(legGeometry, tableMaterial);
+                const xPos = (i < 2 ? -1.8 : 1.8);
+                const zPos = (i % 2 === 0 ? -0.8 : 0.8);
+                leg.position.set(xPos, -1, zPos);
+                table.add(leg);
+            }
+
+            // School bag
+            const bagGeometry = new THREE.BoxGeometry(1.5, 2, 0.8);
+            const bagMaterial = new THREE.MeshPhongMaterial({ color: 0x2244aa });
+            bag = new THREE.Mesh(bagGeometry, bagMaterial);
+            bag.position.y = 1.2;
+            scene.add(bag);
+            bag.visible = false;
+
+            // Notebook
+            const notebookGeometry = new THREE.BoxGeometry(1.2, 1.6, 0.1);
+            const notebookMaterial = new THREE.MeshPhongMaterial({ 
+                color: 0xffffff,
+                map: createNotebookTexture()
+            });
+            notebook = new THREE.Mesh(notebookGeometry, notebookMaterial);
+            notebook.position.set(0, 2, 2);
+            notebook.visible = false;
+            scene.add(notebook);
+
+            camera.position.z = 8;
+            camera.position.y = 2;
+
+            // Event listeners
+            bag.userData.clickable = true;
+            renderer.domElement.addEventListener('click', onMouseClick);
+
+            // Initial switch state (off - glowing)
+            switchMesh.children[0].material.emissiveIntensity = 0.5;
+            switchGlow.visible = true;
+            bulbGlow.material.opacity = 0;
+
+            animate();
+        }
+
+        function createNotebookTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512;
+            canvas.height = 512;
+            const context = canvas.getContext('2d');
+            
+            context.fillStyle = 'white';
+            context.fillRect(0, 0, 512, 512);
+            
+            context.fillStyle = 'black';
+            context.font = '48px Arial';
+            context.textAlign = 'center';
+            context.fillText('PLEASE', 256, 200);
+            context.fillText('VOTE', 256, 256);
+            context.fillText('ME 🥰', 256, 312);
+            
+            const texture = new THREE.CanvasTexture(canvas);
+            return texture;
+        }
+
+        function toggleLight() {
+            isLightOn = !isLightOn;
+            
+            if (isLightOn) {
+                light.intensity = 1;
+                bulbLight.intensity = 1;
+                bulbMesh.material.emissive.setHex(0xffff00);
+                // Make bulb glow when on
+                gsap.to(bulbGlow.material, { duration: 0.5, opacity: 0.3 });
+                gsap.to(bag.position, { duration: 1, y: 1.2 });
+                gsap.to(switchMesh.children[2].rotation, { duration: 0.3, z: Math.PI/4 });
+                // Turn off switch glow when on
+                switchMesh.children[0].material.emissiveIntensity = 0;
+                switchGlow.visible = false;
+                bag.visible = true;
+            } else {
+                light.intensity = 0;
+                bulbLight.intensity = 0;
+                bulbMesh.material.emissive.setHex(0x000000);
+                // Turn off bulb glow
+                gsap.to(bulbGlow.material, { duration: 0.5, opacity: 0 });
+                gsap.to(switchMesh.children[2].rotation, { duration: 0.3, z: -Math.PI/4 });
+                // Turn on switch glow when off
+                switchMesh.children[0].material.emissiveIntensity = 0.5;
+                switchGlow.visible = true;
+                bag.visible = false;
+                notebook.visible = false;
+            }
+        }
+
+        function onMouseClick(event) {
+            const mouse = new THREE.Vector2(
+                (event.clientX / window.innerWidth) * 2 - 1,
+                -(event.clientY / window.innerHeight) * 2 + 1
+            );
+
+            const raycaster = new THREE.Raycaster();
+            raycaster.setFromCamera(mouse, camera);
+
+            const intersects = raycaster.intersectObjects([bag, switchMesh, ...switchMesh.children]);
+
+            if (intersects.length > 0) {
+                if (intersects[0].object === bag || intersects[0].object.parent === switchMesh) {
+                    if (intersects[0].object === bag && bag.visible && !isNotebookOpen) {
+                        openNotebook();
+                    } else if (intersects[0].object.parent === switchMesh || intersects[0].object === switchMesh) {
+                        toggleLight();
+                    }
+                }
+            }
+        }
+
+        function openNotebook() {
+            notebook.visible = true;
+            isNotebookOpen = true;
+
+            // Animate notebook coming out and zooming towards screen
+            gsap.to(notebook.position, {
+                duration: 1.5,
+                y: 3,
+                z: 4,
+                ease: "power2.out"
+            });
+
+            gsap.to(notebook.rotation, {
+                duration: 1.5,
+                x: Math.PI * 0.1,
+                ease: "power2.out"
+            });
+
+            // Camera zoom animation
+            gsap.to(camera.position, {
+                duration: 2,
+                z: 6,
+                y: 3,
+                ease: "power2.inOut"
+            });
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            renderer.render(scene, camera);
+        }
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        init();
+    </script>
+</body>
+</html>
+    
+<!DOCTYPE html>
+<html>
+<head>
+    <title>3D Interactive Scene</title>
+    <style>
+        body { margin: 0; background-color: white; }
+        canvas { display: block; }
+        #switch-container {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            z-index: 100;
+            cursor: pointer;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.7.1/dist/gsap.min.js"></script>
+</head>
+<body>
+    
+    <script>
+        let scene, camera, renderer, light, bag, notebook, table;
+        let isLightOn = false;
+        let isNotebookOpen = false;
+        let switchMesh, bulbMesh, bulbLight, switchGlow;
+
+        function init() {
+            // Scene setup
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            // Lighting
+            light = new THREE.SpotLight(0xffffff, 0);
+            light.position.set(0, 10, 10);
+            scene.add(light);
+
+            // 3D Switch
+            const switchBase = new THREE.BoxGeometry(0.4, 0.8, 0.1);
+            const switchMaterial = new THREE.MeshPhongMaterial({ 
+                color: 0x404040,
+                emissive: 0x808080,
+                emissiveIntensity: 0
+            });
+            switchMesh = new THREE.Group();
+            
+            const base = new THREE.Mesh(switchBase, switchMaterial);
+            switchMesh.add(base);
+
+            // Switch glow
+            const glowGeometry = new THREE.BoxGeometry(0.5, 0.9, 0.2);
+            const glowMaterial = new THREE.MeshBasicMaterial({
+                color: 0x808080,
+                transparent: true,
+                opacity: 0.5
+            });
+            switchGlow = new THREE.Mesh(glowGeometry, glowMaterial);
+            switchGlow.visible = true;
+            switchMesh.add(switchGlow);
+
+            const leverGeometry = new THREE.BoxGeometry(0.1, 0.3, 0.1);
+            const leverMaterial = new THREE.MeshPhongMaterial({ color: 0x808080 });
+            const lever = new THREE.Mesh(leverGeometry, leverMaterial);
+            lever.position.set(0, 0.2, 0.1);
+            switchMesh.add(lever);
+
+            switchMesh.position.set(-1.5, 1, 0);
+            scene.add(switchMesh);
+
+            // Light Bulb
+            const bulbGeometry = new THREE.SphereGeometry(0.2, 32, 32);
+            const bulbMaterial = new THREE.MeshPhongMaterial({ 
+                color: 0xffff00,
+                transparent: true,
+                opacity: 0.5,
+                emissive: 0xfff
+            });
+            bulbMesh = new THREE.Mesh(bulbGeometry, bulbMaterial);
+            bulbMesh.position.set(0, 4, 0);
+            scene.add(bulbMesh);
+
+            // Bulb base
+            const baseGeometry = new THREE.CylinderGeometry(0.1, 0.1, 0.2, 32);
+            const baseMesh = new THREE.Mesh(baseGeometry, new THREE.MeshPhongMaterial({ color: 0xfff }));
+            baseMesh.position.set(0, 3.7, 0);
+            scene.add(baseMesh);
+
+            // Bulb light
+            bulbLight = new THREE.PointLight(0xffff00, 0, 10);
+            bulbLight.position.copy(bulbMesh.position);
+            scene.add(bulbLight);
+
+            // Table
+            const tableGeometry = new THREE.BoxGeometry(4, 0.2, 2);
+            const tableMaterial = new THREE.MeshPhongMaterial({ color: 0x8b4513 });
+            table = new THREE.Mesh(tableGeometry, tableMaterial);
+            scene.add(table);
+
+            // Table legs
+            for(let i = 0; i < 4; i++) {
+                const legGeometry = new THREE.BoxGeometry(0.2, 2, 0.2);
+                const leg = new THREE.Mesh(legGeometry, tableMaterial);
+                const xPos = (i < 2 ? -1.8 : 1.8);
+                const zPos = (i % 2 === 0 ? -0.8 : 0.8);
+                leg.position.set(xPos, -1, zPos);
+                table.add(leg);
+            }
+
+            // School bag
+            const bagGeometry = new THREE.BoxGeometry(1.5, 2, 0.8);
+            const bagMaterial = new THREE.MeshPhongMaterial({ color: 0x2244aa });
+            bag = new THREE.Mesh(bagGeometry, bagMaterial);
+            bag.position.y = 1.2;
+            scene.add(bag);
+            bag.visible = false;
+
+            // Notebook
+            const notebookGeometry = new THREE.BoxGeometry(1.2, 1.6, 0.1);
+            const notebookMaterial = new THREE.MeshPhongMaterial({ 
+                color: 0xffffff,
+                map: createNotebookTexture()
+            });
+            notebook = new THREE.Mesh(notebookGeometry, notebookMaterial);
+            notebook.position.set(0, 2, 2);
+            notebook.visible = false;
+            scene.add(notebook);
+
+            camera.position.z = 8;
+            camera.position.y = 2;
+
+            // Event listeners
+            bag.userData.clickable = true;
+            renderer.domElement.addEventListener('click', onMouseClick);
+
+            // Initial switch state (off - glowing)
+            switchMesh.children[0].material.emissiveIntensity = 0.5;
+            switchGlow.visible = true;
+
+            animate();
+        }
+
+        function createNotebookTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512;
+            canvas.height = 512;
+            const context = canvas.getContext('2d');
+            
+            context.fillStyle = 'white';
+            context.fillRect(0, 0, 512, 512);
+            
+            context.fillStyle = 'black';
+            context.font = '48px Arial';
+            context.textAlign = 'center';
+            context.fillText('Uday', 256, 200);
+            context.fillText('Prashant', 256, 256);
+            context.fillText('Uday', 256, 312);
+            
+            const texture = new THREE.CanvasTexture(canvas);
+            return texture;
+        }
+
+        function toggleLight() {
+            isLightOn = !isLightOn;
+            
+            if (isLightOn) {
+                light.intensity = 1;
+                bulbLight.intensity = 1;
+                bulbMesh.material.emissive.setHex(0xffff00);
+                gsap.to(bag.position, { duration: 1, y: 1.2 });
+                gsap.to(switchMesh.children[2].rotation, { duration: 0.3, z: Math.PI/4 });
+                // Turn off switch glow when on
+                switchMesh.children[0].material.emissiveIntensity = 0;
+                switchGlow.visible = false;
+                bag.visible = true;
+            } else {
+                light.intensity = 0;
+                bulbLight.intensity = 0;
+                bulbMesh.material.emissive.setHex(0xfff);
+                gsap.to(switchMesh.children[2].rotation, { duration: 0.3, z: -Math.PI/4 });
+                // Turn on switch glow when off
+                switchMesh.children[0].material.emissiveIntensity = 0.5;
+                switchGlow.visible = true;
+                bag.visible = false;
+                notebook.visible = false;
+            }
+        }
+
+        function onMouseClick(event) {
+            const mouse = new THREE.Vector2(
+                (event.clientX / window.innerWidth) * 2 - 1,
+                -(event.clientY / window.innerHeight) * 2 + 1
+            );
+
+            const raycaster = new THREE.Raycaster();
+            raycaster.setFromCamera(mouse, camera);
+
+            const intersects = raycaster.intersectObjects([bag, switchMesh, ...switchMesh.children]);
+
+            if (intersects.length > 0) {
+                if (intersects[0].object === bag || intersects[0].object.parent === switchMesh) {
+                    if (intersects[0].object === bag && bag.visible && !isNotebookOpen) {
+                        openNotebook();
+                    } else if (intersects[0].object.parent === switchMesh || intersects[0].object === switchMesh) {
+                        toggleLight();
+                    }
+                }
+            }
+        }
+
+        function openNotebook() {
+            notebook.visible = true;
+            isNotebookOpen = true;
+
+            // Animate notebook coming out and zooming towards screen
+            gsap.to(notebook.position, {
+                duration: 1.5,
+                y: 3,
+                z: 4,
+                ease: "power2.out"
+            });
+
+            gsap.to(notebook.rotation, {
+                duration: 1.5,
+                x: Math.PI * 0.1,
+                ease: "power2.out"
+            });
+
+            // Camera zoom animation
+            gsap.to(camera.position, {
+                duration: 2,
+                z: 6,
+                y: 3,
+                ease: "power2.inOut"
+            });
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            renderer.render(scene, camera);
+        }
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        init();
+    </script>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
